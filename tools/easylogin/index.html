@@ -104,6 +104,14 @@
         }
       }
 
+      function isPathSecretSegment(segment) {
+        if (!segment) {
+          return false;
+        }
+        var lower = segment.toLowerCase();
+        return lower !== "easylogin" && lower !== "index.html" && segment.indexOf(".") === -1;
+      }
+
       function getPathSecret() {
         var path = window.location.pathname || "";
         var trimmed = path.replace(/\/+$/, "");
@@ -117,12 +125,30 @@
         }
 
         var last = segments[segments.length - 1];
-        var lastLower = last.toLowerCase();
-        if (!last || lastLower === "easylogin" || lastLower === "index.html" || last.indexOf(".") !== -1) {
+        if (!isPathSecretSegment(last)) {
           return "";
         }
 
         return decodeValue(last);
+      }
+
+      function getCanonicalPathWithoutSecret() {
+        var path = window.location.pathname || "/";
+        var hasTrailingSlash = /\/$/.test(path);
+        var segments = path.split("/").filter(Boolean);
+
+        if (segments.length && isPathSecretSegment(segments[segments.length - 1])) {
+          segments.pop();
+        }
+
+        var cleanPath = "/" + segments.join("/");
+        if (cleanPath === "/") {
+          return cleanPath;
+        }
+        if (hasTrailingSlash || cleanPath.toLowerCase() === "/tools/easylogin") {
+          return cleanPath + "/";
+        }
+        return cleanPath;
       }
 
       function resolveSecretFromUrl() {
@@ -152,12 +178,29 @@
         input.setAttribute("aria-invalid", "false");
       }
 
+      function clearSecretFromUrl() {
+        var params = new URLSearchParams(window.location.search);
+        var hadQuerySecret = params.has("secret");
+        var hadHashSecret = !!(window.location.hash && window.location.hash.length > 1);
+        var hadPathSecret = !!getPathSecret();
+
+        if (!hadQuerySecret && !hadHashSecret && !hadPathSecret) {
+          return;
+        }
+
+        if (hadQuerySecret) {
+          params.delete("secret");
+        }
+
+        var cleanPath = getCanonicalPathWithoutSecret();
+        var query = params.toString();
+        var nextUrl = cleanPath + (query ? "?" + query : "");
+        window.history.replaceState(null, "", nextUrl);
+      }
+
       function validateSecret(secret) {
         if (!secret) {
           return "Enter your 2FA secret to continue.";
-        }
-        if (secret.length < 16) {
-          return "Secret seems short. Most 2FA keys are 16+ characters.";
         }
         if (!/^[A-Z2-7]+=*$/.test(secret)) {
           return "Use only Base32 characters: letters A-Z and numbers 2-7.";
@@ -198,6 +241,7 @@
         input.classList.remove("input-error");
         clearValidation();
         clearGeneratedState();
+        clearSecretFromUrl();
         syncInputClearButton();
         input.focus();
       }
@@ -304,7 +348,11 @@
         syncInputClearButton();
         input.focus();
         input.setSelectionRange(sanitized.length, sanitized.length);
-        return generateFromInput();
+        var generated = generateFromInput();
+        if (generated) {
+          clearSecretFromUrl();
+        }
+        return generated;
       }
 
       function resetCopyButton() {
